@@ -1,3 +1,4 @@
+const Cookie = require('cookie')
 require('dotenv').config()
 const express = require('express');
 const querrystring = require('querystring');
@@ -33,10 +34,12 @@ const generateRandomString = length => {
 };
 
 const stateKey = 'spotify_auth_state'
+const timeStampKey = 'spotify_token_timestamp'
 
 app.get('/login', (req, res) => {
   const state = generateRandomString(16)
   res.cookie(stateKey, state)
+  res.cookie(timeStampKey, Date.now())
 
   const scope = [
     'user-read-private',
@@ -72,7 +75,7 @@ app.get('/callback', (req, res) => {
     }),
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
-      authorization: `Basic  ${new Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`
+      authorization: `Basic ${new Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`
     },
   })
     .then(response => {
@@ -84,8 +87,25 @@ app.get('/callback', (req, res) => {
           refresh_token,
           expires_in,
         })
-
-        res.redirect(`http://localhost:5173/?${querryParams}`)
+        const cookies = [
+          Cookie.serialize('spotify_access_token', access_token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV !== 'development',
+            maxAge: 60 * 60,
+            sameSite: 'strict',
+            path: '/'
+          }),
+          Cookie.serialize('spotify_refresh_token', refresh_token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV !== 'development',
+            maxAge: 60 * 60,
+            sameSite: 'strict',
+            path: '/'
+          })
+        ]
+        res.status = 200
+        res.setHeader('Set-Cookie', cookies)
+        res.redirect(`http://localhost:3000/`)
 
       } else {
         res.redirect(`/?${querrystring.stringify({ error: 'invalid_token' })}`)
@@ -108,16 +128,47 @@ app.get('/refresh_token', (req, res) => {
     }),
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
-      authorization: `Basic  ${new Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`
+      authorization: `Basic ${new Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`
     },
   })
     .then(response => {
-      res.status(200).json(response.data)
+      if (response.status === 200) {
+
+        const { access_token, expires_in } = response.data
+        const dataTokens = {
+          access_token,
+          expires_in,
+        }
+
+        const cookies = [
+          Cookie.serialize('spotify_access_token', access_token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV !== 'development',
+            maxAge: 60 * 60,
+            sameSite: 'strict',
+            path: '/'
+          }),
+          Cookie.serialize('spotify_token_timestamp', Date.now(), {
+            httpOnly: true,
+            secure: process.env.NODE_ENV !== 'development',
+            maxAge: 60 * 60,
+            sameSite: 'strict',
+            path: '/'
+          })
+        ]
+        res.setHeader('Set-Cookie', cookies)
+        res.status(200)
+
+
+      } else {
+        res.status(400).json({ error: 'invalid_token' })
+      }
     })
     .catch(err => {
       res.send(err)
     })
 })
+
 
 app.get('*', (req, res) => {
   res.send('not found')
